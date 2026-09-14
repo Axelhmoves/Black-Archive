@@ -1,16 +1,42 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from "react"
+import { supabase } from "./supabaseClient"
 
 function App() {
   const [seccion, setSeccion] = useState("home")
+
+  const [adminEmail, setAdminEmail] = useState("")
+  const [adminPassword, setAdminPassword] = useState("")
+  const [adminUser, setAdminUser] = useState(null)
+  const [adminMessage, setAdminMessage] = useState("")
+  const [submissions, setSubmissions] = useState([])
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false)
+
+  const [publicSubmissions, setPublicSubmissions] = useState([])
+  const [loadingPublicSubmissions, setLoadingPublicSubmissions] = useState(false)
+
   const [letrasGlitch, setLetrasGlitch] = useState({})
   const [volumen, setVolumen] = useState(0.3)
+
+  const [submission, setSubmission] = useState({
+    title: "",
+    story: "",
+    location: "",
+    date: "",
+    category: "Case",
+    author_name: "",
+  })
+
+  const [sendingSubmission, setSendingSubmission] = useState(false)
+  const [submissionMessage, setSubmissionMessage] = useState("")
 
   const musicaPorSeccion = {
     home: "/Audio/Home.mp3",
     cases: "/Audio/Cases.mp3",
     entities: "/Audio/Entities.mp3",
     locations: "/Audio/Locations.mp3",
-    incidents: "/Audio/Incidents.mp3"
+    incidents: "/Audio/Incidents.mp3",
+    submit: "/Audio/Home.mp3",
+    admin: "/Audio/Home.mp3",
   }
 
   const [archivoAbierto, setArchivoAbierto] = useState(false)
@@ -28,13 +54,79 @@ function App() {
 
   const iniciarMusica = () => {
     if (backgroundAudioRef.current) {
-      backgroundAudioRef.current.play()
+      backgroundAudioRef.current.play().catch(() => {})
     }
   }
 
-  // GLITCH DE LETRAS
-  useEffect(() => {
+  // =========================
+  // CARGAR SUBMISSIONS ADMIN
+  // =========================
 
+  const cargarSubmissions = async () => {
+    setLoadingSubmissions(true)
+
+    const { data, error } = await supabase
+      .from("submissions")
+      .select("*")
+      .order("created_at", { ascending: false })
+
+    if (error) {
+      console.error("SUBMISSIONS ERROR:", error)
+      setAdminMessage("ARCHIVE ERROR — Unable to load submissions.")
+      setLoadingSubmissions(false)
+      return
+    }
+
+    setSubmissions(data || [])
+    setLoadingSubmissions(false)
+  }
+
+  // =========================
+  // CARGAR SUBMISSIONS PUBLICAS
+  // =========================
+
+  const cargarPublicSubmissions = async () => {
+    setLoadingPublicSubmissions(true)
+
+    const { data, error } = await supabase
+      .from("submissions")
+      .select("*")
+      .eq("status", "approved")
+      .order("created_at", { ascending: false })
+
+    if (error) {
+      console.error("PUBLIC SUBMISSIONS ERROR:", error)
+      setLoadingPublicSubmissions(false)
+      return
+    }
+
+    setPublicSubmissions(data || [])
+    setLoadingPublicSubmissions(false)
+  }
+
+  // =========================
+  // CARGAR PUBLICACIONES
+  // =========================
+
+  useEffect(() => {
+    cargarPublicSubmissions()
+  }, [])
+
+  // =========================
+  // CARGAR SUBMISSIONS ADMIN
+  // =========================
+
+  useEffect(() => {
+    if (adminUser) {
+      cargarSubmissions()
+    }
+  }, [adminUser])
+
+  // =========================
+  // GLITCH DE LETRAS
+  // =========================
+
+  useEffect(() => {
     const caracteres = [
       "Α",
       "Β",
@@ -55,11 +147,10 @@ function App() {
       "Ð",
       "Þ",
       "Ŧ",
-      "Ȝ"
+      "Ȝ",
     ]
 
     const intervalo = setInterval(() => {
-
       const posicion = Math.floor(Math.random() * 13)
 
       if (posicion === 5) return
@@ -68,24 +159,24 @@ function App() {
         caracteres[Math.floor(Math.random() * caracteres.length)]
 
       setLetrasGlitch({
-        [posicion]: caracter
+        [posicion]: caracter,
       })
 
       setTimeout(() => {
         setLetrasGlitch({})
       }, 350)
-
     }, 5000)
 
     return () => clearInterval(intervalo)
-
   }, [])
 
+  // =========================
   // AUDIO DEL CASO
-  useEffect(() => {
+  // =========================
 
+  useEffect(() => {
     if (audioReproduciendo) {
-      audioRef.current?.play()
+      audioRef.current?.play().catch(() => {})
     } else {
       audioRef.current?.pause()
 
@@ -93,21 +184,23 @@ function App() {
         audioRef.current.currentTime = 0
       }
     }
-
   }, [audioReproduciendo])
 
+  // =========================
   // VOLUMEN DE MUSICA
-  useEffect(() => {
+  // =========================
 
+  useEffect(() => {
     if (backgroundAudioRef.current) {
       backgroundAudioRef.current.volume = volumen
     }
-
   }, [volumen])
 
-  // CAMBIO DE MUSICA ENTRE SECCIONES
-  useEffect(() => {
+  // =========================
+  // CAMBIO DE MUSICA
+  // =========================
 
+  useEffect(() => {
     const audio = backgroundAudioRef.current
 
     if (!audio) return
@@ -115,11 +208,9 @@ function App() {
     let volumenActual = audio.volume
 
     const fadeOut = setInterval(() => {
-
       volumenActual -= 0.05
 
       if (volumenActual <= 0) {
-
         clearInterval(fadeOut)
 
         audio.volume = 0
@@ -130,7 +221,6 @@ function App() {
         let nuevoVolumen = 0
 
         const fadeIn = setInterval(() => {
-
           nuevoVolumen += 0.05
 
           if (nuevoVolumen >= volumen) {
@@ -139,25 +229,196 @@ function App() {
           }
 
           audio.volume = nuevoVolumen
-
         }, 100)
-
       } else {
-
         audio.volume = volumenActual
-
       }
-
     }, 100)
 
     return () => {
       clearInterval(fadeOut)
     }
-
   }, [seccion])
+
+  // =========================
+  // MODERAR SUBMISSION
+  // =========================
+
+  const actualizarSubmission = async (id, nuevoStatus) => {
+    const { data, error } = await supabase
+      .from("submissions")
+      .update({
+        status: nuevoStatus,
+      })
+      .eq("id", id)
+      .select()
+
+    if (error) {
+      console.error("UPDATE SUBMISSION ERROR:", error)
+      setAdminMessage("ACTION FAILED — Unable to update submission.")
+      return
+    }
+
+    setSubmissions((actuales) =>
+      actuales.map((submission) =>
+        submission.id === id
+          ? { ...submission, status: nuevoStatus }
+          : submission
+      )
+    )
+
+    if (nuevoStatus === "approved") {
+      const submissionAprobada = data?.[0]
+
+      if (submissionAprobada) {
+        setPublicSubmissions((actuales) => [
+          submissionAprobada,
+          ...actuales.filter(
+            (submission) => submission.id !== id
+          ),
+        ])
+      }
+    } else {
+      setPublicSubmissions((actuales) =>
+        actuales.filter(
+          (submission) => submission.id !== id
+        )
+      )
+    }
+
+    setAdminMessage(
+      `SUBMISSION ${nuevoStatus.toUpperCase()}`
+    )
+  }
+
+  // =========================
+  // ELIMINAR SUBMISSION
+  // =========================
+
+  const eliminarSubmission = async (id) => {
+    const { error } = await supabase
+      .from("submissions")
+      .delete()
+      .eq("id", id)
+
+    if (error) {
+      console.error("DELETE SUBMISSION ERROR:", error)
+      setAdminMessage("DELETE FAILED — Unable to remove submission.")
+      return
+    }
+
+    setSubmissions((actuales) =>
+      actuales.filter((submission) => submission.id !== id)
+    )
+
+    setPublicSubmissions((actuales) =>
+      actuales.filter((submission) => submission.id !== id)
+    )
+
+    setAdminMessage("SUBMISSION DELETED")
+  }
+
+  // =========================
+  // LOGIN ADMIN
+  // =========================
+
+  const iniciarSesionAdmin = async (e) => {
+    e.preventDefault()
+
+    setAdminMessage("AUTHENTICATING...")
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: adminEmail,
+      password: adminPassword,
+    })
+
+    if (error) {
+      console.error("ADMIN LOGIN ERROR:", error)
+      setAdminMessage("ACCESS DENIED — Invalid credentials.")
+      return
+    }
+
+    setAdminUser(data.user)
+    setAdminPassword("")
+    setAdminMessage("ACCESS GRANTED")
+  }
+
+  // =========================
+  // ENVIAR HISTORIA
+  // =========================
+
+  const enviarHistoria = async (e) => {
+    e.preventDefault()
+
+    setSendingSubmission(true)
+    setSubmissionMessage("")
+
+    const { error } = await supabase
+      .from("submissions")
+      .insert([
+        {
+          title: submission.title,
+          story: submission.story,
+          Location: submission.location,
+          Date: submission.date,
+          Category: submission.category,
+          author_name: submission.author_name,
+          status: "pending",
+        },
+      ])
+
+    setSendingSubmission(false)
+
+    if (error) {
+      console.error("SUPABASE ERROR:", error)
+
+      setSubmissionMessage(
+        "SUBMISSION FAILED — Please try again later."
+      )
+
+      return
+    }
+
+    setSubmission({
+      title: "",
+      story: "",
+      location: "",
+      date: "",
+      category: "Case",
+      author_name: "",
+    })
+
+    setSubmissionMessage(
+      "SUBMISSION RECEIVED — Your report has been submitted for archival review."
+    )
+  }
+
+  // =========================
+  // FILTROS PUBLICOS
+  // =========================
+
+  const publicCases = publicSubmissions.filter(
+    (submission) => submission.Category === "Case"
+  )
+
+  const publicEntities = publicSubmissions.filter(
+    (submission) => submission.Category === "Entity"
+  )
+
+  const publicLocations = publicSubmissions.filter(
+    (submission) => submission.Category === "Location"
+  )
+
+  const publicIncidents = publicSubmissions.filter(
+    (submission) => submission.Category === "Incident"
+  )
 
   return (
     <div>
+
+      {/* =========================
+          AUDIO
+      ========================= */}
 
       <audio
         ref={audioRef}
@@ -171,12 +432,24 @@ function App() {
         preload="auto"
       />
 
+      {/* =========================
+          TOP BAR
+      ========================= */}
+
       <div className="top-bar">
         <span>BLACK ARCHIVE</span>
         <span>CASE FILE SYSTEM</span>
       </div>
 
-      <h1 className={`archive-title ${seccion === "home" ? "home-title" : ""}`}>
+      {/* =========================
+          TITLE
+      ========================= */}
+
+      <h1
+        className={`archive-title ${
+          seccion === "home" ? "home-title" : ""
+        }`}
+      >
         {"BLACK ARCHIVE".split("").map((letra, indice) => (
           <span key={indice}>
             {letrasGlitch[indice] || letra}
@@ -184,9 +457,20 @@ function App() {
         ))}
       </h1>
 
-      <h3 className={seccion === "home" ? "home-intro-subtitle" : ""}>
-  CLASSIFICATION: CONFIDENTIAL
-</h3>
+      <h3
+        className={
+          seccion === "home"
+            ? "home-intro-subtitle"
+            : ""
+        }
+      >
+        CLASSIFICATION: CONFIDENTIAL
+      </h3>
+
+      {/* =====================================================
+          HOME
+      ===================================================== */}
+
       {seccion === "home" && (
         <>
           <p className="archive-description">
@@ -215,16 +499,34 @@ function App() {
               CASE FILES
             </button>
 
-            <button onClick={() => setSeccion("entities")}>
+            <button
+              onClick={() => setSeccion("entities")}
+            >
               ENTITIES
             </button>
 
-            <button onClick={() => setSeccion("locations")}>
+            <button
+              onClick={() => setSeccion("locations")}
+            >
               LOCATIONS
             </button>
 
-            <button onClick={() => setSeccion("incidents")}>
+            <button
+              onClick={() => setSeccion("incidents")}
+            >
               INCIDENTS
+            </button>
+
+            <button
+              onClick={() => setSeccion("submit")}
+            >
+              SUBMIT A STORY
+            </button>
+
+            <button
+              onClick={() => setSeccion("admin")}
+            >
+              ADMIN
             </button>
 
           </div>
@@ -239,14 +541,186 @@ function App() {
               max="1"
               step="0.01"
               value={volumen}
-              onChange={(e) => setVolumen(Number(e.target.value))}
+              onChange={(e) =>
+                setVolumen(Number(e.target.value))
+              }
             />
 
-            <span>{Math.round(volumen * 100)}%</span>
+            <span>
+              {Math.round(volumen * 100)}%
+            </span>
 
           </div>
         </>
       )}
+
+      {/* =====================================================
+          SUBMIT A STORY
+      ===================================================== */}
+
+      {seccion === "submit" && (
+        <section className="submit-section">
+
+          <h2>SUBMIT A STORY</h2>
+
+          <p className="submit-intro">
+            Have you experienced something you cannot explain?
+            Submit your report to the Black Archive.
+          </p>
+
+          <form
+            className="submission-form"
+            onSubmit={enviarHistoria}
+          >
+
+            <label>
+              TITLE
+
+              <input
+                type="text"
+                value={submission.title}
+                onChange={(e) =>
+                  setSubmission({
+                    ...submission,
+                    title: e.target.value,
+                  })
+                }
+                required
+                minLength={3}
+                maxLength={100}
+                placeholder="Give your report a title"
+              />
+            </label>
+
+            <label>
+              YOUR STORY
+
+              <textarea
+                value={submission.story}
+                onChange={(e) =>
+                  setSubmission({
+                    ...submission,
+                    story: e.target.value,
+                  })
+                }
+                required
+                minLength={20}
+                maxLength={5000}
+                placeholder="Describe what happened..."
+              />
+            </label>
+
+            <label>
+              LOCATION
+
+              <input
+                type="text"
+                value={submission.location}
+                onChange={(e) =>
+                  setSubmission({
+                    ...submission,
+                    location: e.target.value,
+                  })
+                }
+                placeholder="Where did this happen?"
+              />
+            </label>
+
+            <label>
+              DATE / YEAR
+
+              <input
+                type="text"
+                value={submission.date}
+                onChange={(e) =>
+                  setSubmission({
+                    ...submission,
+                    date: e.target.value,
+                  })
+                }
+                placeholder="Example: 2024"
+              />
+            </label>
+
+            <label>
+              CATEGORY
+
+              <select
+                value={submission.category}
+                onChange={(e) =>
+                  setSubmission({
+                    ...submission,
+                    category: e.target.value,
+                  })
+                }
+              >
+                <option value="Case">
+                  CASE
+                </option>
+
+                <option value="Entity">
+                  ENTITY
+                </option>
+
+                <option value="Location">
+                  LOCATION
+                </option>
+
+                <option value="Incident">
+                  INCIDENT
+                </option>
+              </select>
+            </label>
+
+            <label>
+              YOUR NAME
+
+              <input
+                type="text"
+                value={submission.author_name}
+                onChange={(e) =>
+                  setSubmission({
+                    ...submission,
+                    author_name: e.target.value,
+                  })
+                }
+                placeholder="Optional"
+              />
+            </label>
+
+            <button
+              type="submit"
+              disabled={sendingSubmission}
+              className="submit-button"
+            >
+              {sendingSubmission
+                ? "TRANSMITTING..."
+                : "SUBMIT REPORT"}
+            </button>
+
+            {submissionMessage && (
+              <p className="submission-message">
+                {submissionMessage}
+              </p>
+            )}
+
+          </form>
+
+          <button
+            onClick={() => {
+              setSubmissionMessage("")
+              setSeccion("home")
+            }}
+          >
+            BACK TO HOME
+          </button>
+
+        </section>
+      )}
+
+      {/* =====================================================
+          CASE FILES
+      ===================================================== */}
 
       {seccion === "cases" && (
         <div className="case-list">
@@ -257,9 +731,66 @@ function App() {
             Classified records of unexplained phenomena.
           </p>
 
-          <button onClick={() => setArchivoAbierto(true)}>
+          <button
+            onClick={() => setArchivoAbierto(true)}
+          >
             CASE #001 — THE EMPTY ROOM
           </button>
+
+          {/* PUBLIC APPROVED CASES */}
+
+          {publicCases.length > 0 && (
+            <>
+              <h3>COMMUNITY CASE FILES</h3>
+
+              {publicCases.map((item) => (
+                <article
+                  key={item.id}
+                  className="evidence"
+                >
+                  <p>
+                    <strong>TITLE:</strong>{" "}
+                    {item.title}
+                  </p>
+
+                  <p>
+                    <strong>LOCATION:</strong>{" "}
+                    {item.Location || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>DATE:</strong>{" "}
+                    {item.Date || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>AUTHOR:</strong>{" "}
+                    {item.author_name || "ANONYMOUS"}
+                  </p>
+
+                  <p>
+                    <strong>STATUS:</strong> ARCHIVED
+                  </p>
+
+                  <p>
+                    {item.story}
+                  </p>
+
+                  {item.image_url && (
+                    <img
+                      src={item.image_url}
+                      alt="Submitted evidence"
+                      className="submitted-image"
+                    />
+                  )}
+                </article>
+              ))}
+            </>
+          )}
+
+          {loadingPublicSubmissions && (
+            <p>CHECKING COMMUNITY ARCHIVES...</p>
+          )}
 
           <br />
 
@@ -276,6 +807,10 @@ function App() {
         </div>
       )}
 
+      {/* =========================
+          LOCKED CASE
+      ========================= */}
+
       {mostrarArchivoBloqueado && (
         <div className="access-log">
           &gt; ACCESS ATTEMPT LOGGED
@@ -290,6 +825,10 @@ function App() {
           <div>CLEARANCE LEVEL: 05 REQUIRED</div>
         </div>
       )}
+
+      {/* =====================================================
+          LOCATIONS
+      ===================================================== */}
 
       {seccion === "locations" && (
         <div className="case-list">
@@ -307,7 +846,9 @@ function App() {
             <p>CLASSIFICATION: ANOMALOUS</p>
             <p>THREAT LEVEL: HIGH</p>
 
-            <button onClick={() => setUbicacionAbierta(1)}>
+            <button
+              onClick={() => setUbicacionAbierta(1)}
+            >
               OPEN LOCATION FILE
             </button>
 
@@ -320,7 +861,9 @@ function App() {
             <p>CLASSIFICATION: UNCONFIRMED</p>
             <p>THREAT LEVEL: UNKNOWN</p>
 
-            <button onClick={() => setUbicacionAbierta(2)}>
+            <button
+              onClick={() => setUbicacionAbierta(2)}
+            >
               OPEN LOCATION FILE
             </button>
 
@@ -333,18 +876,73 @@ function App() {
             <p>CLASSIFICATION: RESTRICTED</p>
             <p>THREAT LEVEL: CRITICAL</p>
 
-            <button onClick={() => setUbicacionAbierta(3)}>
+            <button
+              onClick={() => setUbicacionAbierta(3)}
+            >
               OPEN LOCATION FILE
             </button>
 
           </div>
 
-          <button onClick={() => setSeccion("home")}>
+          {/* PUBLIC APPROVED LOCATIONS */}
+
+          {publicLocations.length > 0 && (
+            <>
+              <h3>COMMUNITY LOCATION ARCHIVES</h3>
+
+              {publicLocations.map((item) => (
+                <article
+                  key={item.id}
+                  className="evidence"
+                >
+                  <p>
+                    <strong>DESIGNATION:</strong>{" "}
+                    {item.title}
+                  </p>
+
+                  <p>
+                    <strong>LOCATION:</strong>{" "}
+                    {item.Location || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>DATE:</strong>{" "}
+                    {item.Date || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>AUTHOR:</strong>{" "}
+                    {item.author_name || "ANONYMOUS"}
+                  </p>
+
+                  <p>
+                    {item.story}
+                  </p>
+
+                  {item.image_url && (
+                    <img
+                      src={item.image_url}
+                      alt="Submitted evidence"
+                      className="submitted-image"
+                    />
+                  )}
+                </article>
+              ))}
+            </>
+          )}
+
+          <button
+            onClick={() => setSeccion("home")}
+          >
             BACK TO HOME
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          INCIDENTS
+      ===================================================== */}
 
       {seccion === "incidents" && (
         <div className="case-list">
@@ -363,7 +961,9 @@ function App() {
             <p>CLASSIFICATION: UNEXPLAINED</p>
             <p>THREAT LEVEL: LOW</p>
 
-            <button onClick={() => setIncidenteAbierto(1)}>
+            <button
+              onClick={() => setIncidenteAbierto(1)}
+            >
               OPEN INCIDENT FILE
             </button>
 
@@ -376,7 +976,9 @@ function App() {
             <p>CLASSIFICATION: TEMPORAL ANOMALY</p>
             <p>THREAT LEVEL: MEDIUM</p>
 
-            <button onClick={() => setIncidenteAbierto(2)}>
+            <button
+              onClick={() => setIncidenteAbierto(2)}
+            >
               OPEN INCIDENT FILE
             </button>
 
@@ -389,7 +991,9 @@ function App() {
             <p>CLASSIFICATION: UNCONFIRMED</p>
             <p>THREAT LEVEL: UNKNOWN</p>
 
-            <button onClick={() => setIncidenteAbierto(3)}>
+            <button
+              onClick={() => setIncidenteAbierto(3)}
+            >
               OPEN INCIDENT FILE
             </button>
 
@@ -402,18 +1006,258 @@ function App() {
             <p>CLASSIFICATION: RESTRICTED</p>
             <p>THREAT LEVEL: CRITICAL</p>
 
-            <button onClick={() => setIncidenteAbierto(4)}>
+            <button
+              onClick={() => setIncidenteAbierto(4)}
+            >
               OPEN INCIDENT FILE
             </button>
 
           </div>
 
-          <button onClick={() => setSeccion("home")}>
+          {/* PUBLIC APPROVED INCIDENTS */}
+
+          {publicIncidents.length > 0 && (
+            <>
+              <h3>COMMUNITY INCIDENT ARCHIVES</h3>
+
+              {publicIncidents.map((item) => (
+                <article
+                  key={item.id}
+                  className="evidence"
+                >
+                  <p>
+                    <strong>DESIGNATION:</strong>{" "}
+                    {item.title}
+                  </p>
+
+                  <p>
+                    <strong>LOCATION:</strong>{" "}
+                    {item.Location || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>DATE:</strong>{" "}
+                    {item.Date || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>AUTHOR:</strong>{" "}
+                    {item.author_name || "ANONYMOUS"}
+                  </p>
+
+                  <p>
+                    {item.story}
+                  </p>
+
+                  {item.image_url && (
+                    <img
+                      src={item.image_url}
+                      alt="Submitted evidence"
+                      className="submitted-image"
+                    />
+                  )}
+                </article>
+              ))}
+            </>
+          )}
+
+          <button
+            onClick={() => setSeccion("home")}
+          >
             BACK TO HOME
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          ADMIN
+      ===================================================== */}
+
+      {seccion === "admin" && (
+        <section className="admin-section">
+
+          <h2>BLACK ARCHIVE — ADMIN ACCESS</h2>
+
+          {!adminUser ? (
+            <form
+              className="admin-login-form"
+              onSubmit={iniciarSesionAdmin}
+            >
+
+              <label>
+                ADMIN EMAIL
+
+                <input
+                  type="email"
+                  value={adminEmail}
+                  onChange={(e) => setAdminEmail(e.target.value)}
+                  required
+                  placeholder="Enter administrator email"
+                />
+              </label>
+
+              <label>
+                PASSWORD
+
+                <input
+                  type="password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  required
+                  placeholder="Enter password"
+                />
+              </label>
+
+              <button type="submit">
+                AUTHENTICATE
+              </button>
+
+              {adminMessage && (
+                <p className="admin-message">
+                  {adminMessage}
+                </p>
+              )}
+
+            </form>
+          ) : (
+            <div className="admin-dashboard">
+
+              <h3>ACCESS GRANTED</h3>
+
+              <p>
+                Administrator session active.
+              </p>
+
+              <p>
+                {adminUser.email}
+              </p>
+
+              <hr />
+
+              <h3>SUBMISSIONS</h3>
+
+              {loadingSubmissions ? (
+                <p>LOADING ARCHIVE...</p>
+              ) : submissions.length === 0 ? (
+                <p>NO SUBMISSIONS FOUND.</p>
+              ) : (
+                <div className="admin-submissions">
+
+                  {submissions.map((submission) => (
+                    <article
+                      key={submission.id}
+                      className="admin-submission"
+                    >
+
+                      <h4>
+                        {submission.title}
+                      </h4>
+
+                      <p>
+                        <strong>CATEGORY:</strong>{" "}
+                        {submission.Category}
+                      </p>
+
+                      <p>
+                        <strong>LOCATION:</strong>{" "}
+                        {submission.Location || "UNKNOWN"}
+                      </p>
+
+                      <p>
+                        <strong>DATE:</strong>{" "}
+                        {submission.Date || "UNKNOWN"}
+                      </p>
+
+                      <p>
+                        <strong>AUTHOR:</strong>{" "}
+                        {submission.author_name || "ANONYMOUS"}
+                      </p>
+
+                      <p>
+                        <strong>STATUS:</strong>{" "}
+                        {submission.status}
+                      </p>
+
+                      <p>
+                        {submission.story}
+                      </p>
+
+                      {submission.image_url && (
+                        <img
+                          src={submission.image_url}
+                          alt="Submitted evidence"
+                          className="submitted-image"
+                        />
+                      )}
+
+                      <div className="admin-actions">
+
+                        {submission.status !== "approved" && (
+                          <button
+                            onClick={() =>
+                              actualizarSubmission(
+                                submission.id,
+                                "approved"
+                              )
+                            }
+                          >
+                            APPROVE
+                          </button>
+                        )}
+
+                        {submission.status !== "rejected" && (
+                          <button
+                            onClick={() =>
+                              actualizarSubmission(
+                                submission.id,
+                                "rejected"
+                              )
+                            }
+                          >
+                            REJECT
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() =>
+                            eliminarSubmission(
+                              submission.id
+                            )
+                          }
+                        >
+                          DELETE
+                        </button>
+
+                      </div>
+
+                    </article>
+                  ))}
+
+                </div>
+              )}
+
+              {adminMessage && (
+                <p className="admin-message">
+                  {adminMessage}
+                </p>
+              )}
+
+            </div>
+          )}
+
+          <button
+            onClick={() => setSeccion("home")}
+          >
+            BACK TO HOME
+          </button>
+
+        </section>
+      )}
+
+      {/* =====================================================
+          ENTITIES
+      ===================================================== */}
 
       {seccion === "entities" && (
         <div className="case-list">
@@ -431,7 +1275,9 @@ function App() {
             <p>CLASSIFICATION: UNKNOWN</p>
             <p>THREAT LEVEL: HIGH</p>
 
-            <button onClick={() => setEntidadAbierta(1)}>
+            <button
+              onClick={() => setEntidadAbierta(1)}
+            >
               OPEN ENTITY FILE
             </button>
 
@@ -444,7 +1290,9 @@ function App() {
             <p>CLASSIFICATION: UNCONFIRMED</p>
             <p>THREAT LEVEL: UNKNOWN</p>
 
-            <button onClick={() => setEntidadAbierta(2)}>
+            <button
+              onClick={() => setEntidadAbierta(2)}
+            >
               OPEN ENTITY FILE
             </button>
 
@@ -457,18 +1305,73 @@ function App() {
             <p>CLASSIFICATION: ████████</p>
             <p>THREAT LEVEL: CRITICAL</p>
 
-            <button onClick={() => setEntidadAbierta(3)}>
+            <button
+              onClick={() => setEntidadAbierta(3)}
+            >
               OPEN ENTITY FILE
             </button>
 
           </div>
 
-          <button onClick={() => setSeccion("home")}>
+          {/* PUBLIC APPROVED ENTITIES */}
+
+          {publicEntities.length > 0 && (
+            <>
+              <h3>COMMUNITY ENTITY ARCHIVES</h3>
+
+              {publicEntities.map((item) => (
+                <article
+                  key={item.id}
+                  className="evidence"
+                >
+                  <p>
+                    <strong>DESIGNATION:</strong>{" "}
+                    {item.title}
+                  </p>
+
+                  <p>
+                    <strong>LOCATION:</strong>{" "}
+                    {item.Location || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>DATE:</strong>{" "}
+                    {item.Date || "UNKNOWN"}
+                  </p>
+
+                  <p>
+                    <strong>AUTHOR:</strong>{" "}
+                    {item.author_name || "ANONYMOUS"}
+                  </p>
+
+                  <p>
+                    {item.story}
+                  </p>
+
+                  {item.image_url && (
+                    <img
+                      src={item.image_url}
+                      alt="Submitted evidence"
+                      className="submitted-image"
+                    />
+                  )}
+                </article>
+              ))}
+            </>
+          )}
+
+          <button
+            onClick={() => setSeccion("home")}
+          >
             BACK TO HOME
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          ENTITY #001
+      ===================================================== */}
 
       {entidadAbierta === 1 && (
         <div className="archivo">
@@ -549,12 +1452,18 @@ function App() {
             authorization from BLACK ARCHIVE command.
           </p>
 
-          <button onClick={() => setEntidadAbierta(null)}>
+          <button
+            onClick={() => setEntidadAbierta(null)}
+          >
             CLOSE ENTITY FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          ENTITY #002
+      ===================================================== */}
 
       {entidadAbierta === 2 && (
         <div className="archivo">
@@ -636,12 +1545,18 @@ function App() {
             its identity.
           </p>
 
-          <button onClick={() => setEntidadAbierta(null)}>
+          <button
+            onClick={() => setEntidadAbierta(null)}
+          >
             CLOSE ENTITY FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          ENTITY #003
+      ===================================================== */}
 
       {entidadAbierta === 3 && (
         <div className="archivo">
@@ -743,12 +1658,18 @@ function App() {
             immediately.
           </p>
 
-          <button onClick={() => setEntidadAbierta(null)}>
+          <button
+            onClick={() => setEntidadAbierta(null)}
+          >
             CLOSE ENTITY FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          LOCATION #001
+      ===================================================== */}
 
       {ubicacionAbierta === 1 && (
         <div className="archivo">
@@ -849,12 +1770,18 @@ function App() {
             anomalous activity documented within the facility.
           </p>
 
-          <button onClick={() => setUbicacionAbierta(null)}>
+          <button
+            onClick={() => setUbicacionAbierta(null)}
+          >
             CLOSE LOCATION FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          LOCATION #002
+      ===================================================== */}
 
       {ubicacionAbierta === 2 && (
         <div className="archivo">
@@ -955,12 +1882,18 @@ function App() {
             Investigation of Blackwood Forest remains ongoing.
           </p>
 
-          <button onClick={() => setUbicacionAbierta(null)}>
+          <button
+            onClick={() => setUbicacionAbierta(null)}
+          >
             CLOSE LOCATION FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          LOCATION #003
+      ===================================================== */}
 
       {ubicacionAbierta === 3 && (
         <div className="archivo">
@@ -1068,12 +2001,18 @@ function App() {
             ████████████████████████████████████
           </p>
 
-          <button onClick={() => setUbicacionAbierta(null)}>
+          <button
+            onClick={() => setUbicacionAbierta(null)}
+          >
             CLOSE LOCATION FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          INCIDENT #001
+      ===================================================== */}
 
       {incidenteAbierto === 1 && (
         <div className="archivo">
@@ -1134,12 +2073,18 @@ function App() {
             disappeared from all available records.
           </p>
 
-          <button onClick={() => setIncidenteAbierto(null)}>
+          <button
+            onClick={() => setIncidenteAbierto(null)}
+          >
             CLOSE INCIDENT FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          INCIDENT #002
+      ===================================================== */}
 
       {incidenteAbierto === 2 && (
         <div className="archivo">
@@ -1215,12 +2160,18 @@ function App() {
             Similar reports have since been documented in the same region.
           </p>
 
-          <button onClick={() => setIncidenteAbierto(null)}>
+          <button
+            onClick={() => setIncidenteAbierto(null)}
+          >
             CLOSE INCIDENT FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          INCIDENT #003
+      ===================================================== */}
 
       {incidenteAbierto === 3 && (
         <div className="archivo">
@@ -1303,12 +2254,18 @@ function App() {
             Investigation is currently suspended.
           </p>
 
-          <button onClick={() => setIncidenteAbierto(null)}>
+          <button
+            onClick={() => setIncidenteAbierto(null)}
+          >
             CLOSE INCIDENT FILE
           </button>
 
         </div>
       )}
+
+      {/* =====================================================
+          INCIDENT #004
+      ===================================================== */}
 
       {incidenteAbierto === 4 && (
         <div className="archivo">
@@ -1402,23 +2359,43 @@ function App() {
             █████████████████████████████████████████
           </p>
 
-          <button onClick={() => setIncidenteAbierto(null)}>
+          <button
+            onClick={() => setIncidenteAbierto(null)}
+          >
             CLOSE INCIDENT FILE
           </button>
 
         </div>
       )}
 
+      {/* =====================================================
+          CASE #001
+      ===================================================== */}
+
       {archivoAbierto && (
         <div className="archivo">
 
           <h2>CASE #001</h2>
 
-          <p>Phenomenon recorded: The Empty Room</p>
-          <p>Classification: UNEXPLAINED</p>
-          <p>Threat Level: UNKNOWN</p>
-          <p>Location: [REDACTED]</p>
-          <p>First Recorded: 1987</p>
+          <p>
+            Phenomenon recorded: The Empty Room
+          </p>
+
+          <p>
+            Classification: UNEXPLAINED
+          </p>
+
+          <p>
+            Threat Level: UNKNOWN
+          </p>
+
+          <p>
+            Location: [REDACTED]
+          </p>
+
+          <p>
+            First Recorded: 1987
+          </p>
 
           <h3>INCIDENT REPORT</h3>
 
@@ -1476,7 +2453,9 @@ function App() {
             <p>STATUS: CORRUPTED</p>
             <p>DURATION: 00:17</p>
 
-            <button onClick={() => setAudioAbierto(true)}>
+            <button
+              onClick={() => setAudioAbierto(true)}
+            >
               PLAY RECORDING
             </button>
 
@@ -1487,11 +2466,15 @@ function App() {
             <p>FILE: PHOTO_001.jpeg</p>
             <p>STATUS: RESTRICTED</p>
 
-            <button onClick={() => setImagenAbierta(true)}>
+            <button
+              onClick={() => setImagenAbierta(true)}
+            >
               VIEW IMAGE
             </button>
 
           </div>
+
+          {/* AUDIO WARNING */}
 
           {audioAbierto && (
             <>
@@ -1509,7 +2492,9 @@ function App() {
                   LISTENING MAY CAUSE DISORIENTATION.
                 </p>
 
-                <button onClick={() => setAudioAbierto(false)}>
+                <button
+                  onClick={() => setAudioAbierto(false)}
+                >
                   CANCEL
                 </button>
 
@@ -1525,6 +2510,8 @@ function App() {
               </div>
             </>
           )}
+
+          {/* IMAGE VIEWER */}
 
           {imagenAbierta && (
             <>
@@ -1542,13 +2529,17 @@ function App() {
                   alt="Classified evidence"
                 />
 
-                <button onClick={() => setImagenAbierta(false)}>
+                <button
+                  onClick={() => setImagenAbierta(false)}
+                >
                   CLOSE EVIDENCE
                 </button>
 
               </div>
             </>
           )}
+
+          {/* AUDIO PLAYER */}
 
           {audioReproduciendo && (
             <>
@@ -1574,7 +2565,9 @@ function App() {
                   [ UNKNOWN VOICE PRESENT ]
                 </p>
 
-                <button onClick={() => setAudioReproduciendo(false)}>
+                <button
+                  onClick={() => setAudioReproduciendo(false)}
+                >
                   STOP PLAYBACK
                 </button>
 
@@ -1582,7 +2575,9 @@ function App() {
             </>
           )}
 
-          <button onClick={() => setArchivoAbierto(false)}>
+          <button
+            onClick={() => setArchivoAbierto(false)}
+          >
             CLOSE ARCHIVE
           </button>
 
